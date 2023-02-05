@@ -1,7 +1,12 @@
-use clap::Parser;
-use std::fs;
 use transmission_rss::config::Config;
 use transmission_rss::rss::process_feed;
+
+use std::fs;
+use std::path::PathBuf;
+
+use clap::Parser;
+use transmission_rpc::types::BasicAuth;
+use transmission_rpc::TransClient;
 
 /// Parse args
 #[derive(Parser, Debug)]
@@ -9,7 +14,7 @@ use transmission_rss::rss::process_feed;
 struct Args {
     /// Path to the config file
     #[clap(short, long)]
-    config: String,
+    config: PathBuf,
 }
 
 #[tokio::main]
@@ -25,21 +30,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let cfg: Config = toml::from_str(&file).unwrap();
 
-    let items: Vec<_> = cfg
-        .clone()
-        .rss_list
-        .into_iter()
-        .map(|it| process_feed(it, cfg.clone()))
-        .collect();
+    for feed in &cfg.rss_feeds {
+        for rule in &feed.rules {
+            let dir = cfg.base_download_dir.join(&rule.download_dir);
+            std::fs::create_dir_all(dir)?;
+        }
+    }
 
-    for item in items {
-        match item.await {
-            Ok(count) => {
-                println!("{:?} items processed", count);
-            }
-            Err(err) => {
-                println!("{:?}", err);
-            }
+    // Open the database
+    let db = kv::Store::open(&cfg.persistence.path)?;
+
+    // Creates a new connection
+    let basic_auth = BasicAuth {
+        user: cfg.transmission.username.clone(),
+        password: cfg.transmission.password.clone(),
+    };
+    let mut client = TransClient::with_auth(&cfg.transmission.url, basic_auth);
+
+    for feed in cfg.rss_feeds {
+        if let Err(err) = process_feed(&feed, &db, &mut client, &cfg.base_download_dir).await {
+            log::error!("Error while processing feed `{}`: {err}", &feed.title);
         }
     }
 

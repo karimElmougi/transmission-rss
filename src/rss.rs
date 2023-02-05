@@ -1,106 +1,100 @@
-use crate::config::{Config, RssList};
-use crate::notification::notify_all;
-use log::info;
-use rss::{Channel, Item};
+use crate::config::RssFeed;
+
 use std::error::Error;
-use transmission_rpc::types::{BasicAuth, RpcResponse, TorrentAddArgs, TorrentAdded};
+use std::path::Path;
+
+use rss::{Channel, Item};
+use transmission_rpc::types::TorrentAddArgs;
 use transmission_rpc::TransClient;
 
-pub async fn process_feed(item: RssList, cfg: Config) -> Result<i32, Box<dyn Error + Send + Sync>> {
-    println!("----------------------------");
-    println!("==> Processing [{}]", item.title);
-
-    // Open the database
-    let db = sled::open(&cfg.persistence.path)?;
+pub async fn process_feed(
+    feed: &RssFeed,
+    db: &kv::Store<String>,
+    client: &mut TransClient,
+    base_dir: &Path,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    log::info!("Processing feed `{}`", feed.title);
 
     // Fetch the url
-    let content = reqwest::get(item.url).await?.bytes().await?;
+    let content = reqwest::get(&feed.url).await?.bytes().await?;
     let channel = Channel::read_from(&content[..])?;
 
-    // Creates a new connection
-    let basic_auth = BasicAuth {
-        user: cfg.transmission.username.clone(),
-        password: cfg.transmission.password.clone(),
-    };
-    let client = TransClient::with_auth(&cfg.transmission.url, basic_auth);
-
     // Filters the results
-    let results: Vec<&Item> = channel
+    let items = channel
         .items()
-        .into_iter()
-        .filter(|it| {
-            // Check if item is already on db
-            let db_found = match db.get(get_link(it)) {
-                Ok(val) => val,
-                Err(_) => None,
-            };
+        .iter()
+        .filter_map(extract)
+        .filter(|(link, _)| !is_in_db(db, link));
+    // .filter(|(_, title)| matches(title, &feed.filters));
 
-            if db_found.is_none() {
-                let mut found = false;
-
-                // If no filter is set just accept the item
-                if item.filters.len() == 0 {
-                    return true;
-                }
-
-                for filter in item.filters.clone() {
-                    if it.title().unwrap_or_default().contains(&filter) {
-                        found = true;
-                    }
-                }
-
-                if !found {
-                    info!(
-                        "Skipping {} as it doesn't match any filter",
-                        it.title
-                            .as_deref()
-                            .or(it.link.as_deref())
-                            .unwrap_or_default()
-                    )
-                }
-
-                return found;
-            }
-
-            false
-        })
-        .collect();
-
-    let mut count = 0;
-    for result in results {
-        let title = result.title().unwrap_or_default();
-        let link = get_link(result);
-        // Add the torrent into transmission
-        let add: TorrentAddArgs = TorrentAddArgs {
-            filename: Some(link.to_string()),
-            download_dir: Some(item.download_dir.clone()),
-            ..TorrentAddArgs::default()
-        };
-        let res: RpcResponse<TorrentAdded> = client.torrent_add(add).await?;
-        if res.is_ok() {
-            // Update counter
-            count += 1;
-
-            // Send notification
-            notify_all(cfg.clone(), format!("Downloading: {}", title)).await;
-
-            // Persist the item into the database
-            match db.insert(link, b"") {
-                Ok(_) => println!("{:?} saved into db!", &link),
-                Err(err) => println!("Failed to save {:?} into db: {:?}", link, err),
+    for (link, title) in items {
+        for rule in &feed.rules {
+            if title.contains(&rule.filter) {
+                let dir = base_dir.join(&rule.download_dir);
+                add_torrent(client, link, title, &dir, db).await?;
             }
         }
     }
 
-    // Persist changes on disk
-    db.flush()?;
-
-    Ok(count)
+    Ok(())
 }
 
-fn get_link(item: &Item) -> &str {
-    match item.enclosure() {
-        Some(enclosure) if enclosure.mime_type() == "application/x-bittorrent" => enclosure.url(),
-        _ => item.link().unwrap_or_default(),
+async fn add_torrent(
+    client: &mut TransClient,
+    link: &str,
+    title: &String,
+    download_dir: &Path,
+    db: &kv::Store<String>,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    // Add the torrent into transmission
+    let add: TorrentAddArgs = TorrentAddArgs {
+        filename: Some(link.to_string()),
+        download_dir: Some(download_dir.to_string_lossy().to_string()),
+        ..TorrentAddArgs::default()
+    };
+
+    let response = client.torrent_add(add).await?;
+    if response.is_ok() {
+        match db.set(link, title) {
+            Ok(_) => log::info!("{:?} saved into db!", &link),
+            Err(err) => log::error!("Failed to save {link:?} into db: {err:?}"),
+        }
+    } else {
+        log::error!("Failed to add torrent");
+    }
+
+    Ok(())
+}
+
+fn extract(item: &Item) -> Option<(&str, &String)> {
+    let link = match item.enclosure() {
+        Some(enclosure) if enclosure.mime_type() == "application/x-bittorrent" => {
+            Some(enclosure.url())
+        }
+        _ => item.link(),
+    };
+
+    match (link, &item.title) {
+        (Some(link), Some(title)) => Some((link, title)),
+        (None, Some(title)) => {
+            log::warn!("No link for `{title}`");
+            None
+        }
+        (Some(link), None) => {
+            log::warn!("No title for `{link}`");
+            None
+        }
+        _ => None,
+    }
+}
+
+fn is_in_db(db: &kv::Store<String>, link: &str) -> bool {
+    match db.get(link) {
+        Ok(Some(_)) => true,
+        Ok(None) => false,
+        Err(err) => {
+            log::error!("Error looking for `{link}` in database: {err}");
+            false
+        }
     }
 }
