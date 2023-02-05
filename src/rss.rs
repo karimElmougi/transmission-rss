@@ -13,7 +13,7 @@ pub async fn process_feed(
     client: &mut TransClient,
     base_dir: &Path,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
-    log::info!("Processing feed `{}`", feed.title);
+    log::info!("Checking feed `{}`", feed.title);
 
     // Fetch the url
     let content = reqwest::get(&feed.url).await?.bytes().await?;
@@ -28,8 +28,15 @@ pub async fn process_feed(
 
     for (link, title) in items {
         for rule in &feed.rules {
-            if title.contains(&rule.filter) {
-                log::info!("`{title}` matches rule `{}`, adding torrent...", rule.filter);
+            if rule
+                .filter
+                .split_whitespace()
+                .all(|word| title.contains(word))
+            {
+                log::info!(
+                    "`{title}` matches rule `{}`, adding torrent...",
+                    rule.filter
+                );
                 let dir = base_dir.join(&rule.download_dir);
                 add_torrent(client, link, title, &dir, db).await?;
             }
