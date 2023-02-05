@@ -20,7 +20,8 @@ struct Args {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     pretty_env_logger::formatted_builder()
-        .filter(None, log::LevelFilter::Info)
+        .filter(None, log::LevelFilter::Warn)
+        .filter(Some("transmission_rss"), log::LevelFilter::Info)
         .parse_filters(&std::env::var("RUST_LOG").unwrap_or_default())
         .init();
 
