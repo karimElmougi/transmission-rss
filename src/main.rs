@@ -19,7 +19,11 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    env_logger::init();
+    pretty_env_logger::formatted_builder()
+        .filter(None, log::LevelFilter::Info)
+        .parse_filters(&std::env::var("RUST_LOG").unwrap_or_default())
+        .init();
+
     // Read env
     let args = Args::parse();
 
@@ -33,7 +37,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     for feed in &cfg.rss_feeds {
         for rule in &feed.rules {
             let dir = cfg.base_download_dir.join(&rule.download_dir);
-            std::fs::create_dir_all(dir)?;
+            if !dir.exists() {
+                log::info!("Creating download_dir: `{}`", dir.to_string_lossy());
+                std::fs::create_dir_all(dir)?;
+            }
         }
     }
 

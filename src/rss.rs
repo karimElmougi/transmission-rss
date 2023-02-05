@@ -25,11 +25,11 @@ pub async fn process_feed(
         .iter()
         .filter_map(extract)
         .filter(|(link, _)| !is_in_db(db, link));
-    // .filter(|(_, title)| matches(title, &feed.filters));
 
     for (link, title) in items {
         for rule in &feed.rules {
             if title.contains(&rule.filter) {
+                log::info!("`{title}` matches rule `{}`, adding torrent...", rule.filter);
                 let dir = base_dir.join(&rule.download_dir);
                 add_torrent(client, link, title, &dir, db).await?;
             }
