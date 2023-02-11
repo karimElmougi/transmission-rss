@@ -2,8 +2,9 @@ use transmission_rss::config::Config;
 use transmission_rss::rss::process_feed;
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
+use anyhow::{Context, Result};
 use clap::Parser;
 use transmission_rpc::types::BasicAuth;
 use transmission_rpc::TransClient;
@@ -18,7 +19,7 @@ struct Args {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<()> {
     pretty_env_logger::formatted_builder()
         .filter(None, log::LevelFilter::Warn)
         .filter(Some("transmission_rss"), log::LevelFilter::Info)
@@ -29,24 +30,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
     // Read initial config file
-    let file = match fs::read_to_string(&args.config) {
-        Ok(val) => val,
-        Err(err) => panic!("Failed to find file {:?}: {}", args.config, err),
-    };
-    let cfg: Config = toml::from_str(&file).unwrap();
+    let file = fs::read_to_string(&args.config)
+        .with_context(|| format!("Failed to open config file {:?}", args.config))?;
+
+    let cfg: Config = toml::from_str(&file).context("Config file is invalid")?;
 
     for feed in &cfg.rss_feeds {
         for rule in &feed.rules {
             let dir = cfg.base_download_dir.join(&rule.download_dir);
-            if !dir.exists() {
-                log::info!("Creating download_dir: `{}`", dir.to_string_lossy());
-                std::fs::create_dir_all(dir)?;
+            if let Err(err) = ensure_exists(&dir) {
+                log::error!("{err}");
             }
         }
     }
 
     // Open the database
-    let db = kv::Store::open(&cfg.persistence.path)?;
+    let db = kv::Store::open(&cfg.persistence.path)
+        .with_context(|| format!("Unable to open persistence file {:?}", cfg.persistence.path))?;
 
     // Creates a new connection
     let basic_auth = BasicAuth {
@@ -59,6 +59,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         if let Err(err) = process_feed(&feed, &db, &mut client, &cfg.base_download_dir).await {
             log::error!("Error while processing feed `{}`: {err}", &feed.title);
         }
+    }
+
+    Ok(())
+}
+
+fn ensure_exists(dir: &Path) -> Result<()> {
+    let exists = dir
+        .try_exists()
+        .with_context(|| format!("Couldn't access directory {dir:?}"))?;
+
+    if !exists {
+        log::info!("Creating directory {dir:?}");
+        std::fs::create_dir_all(dir)
+            .with_context(|| format!("Unable to create directory {dir:?}"))?;
     }
 
     Ok(())
