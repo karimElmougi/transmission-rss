@@ -57,7 +57,6 @@ async fn add_torrent(
 
     let response = client.torrent_add(add).await?;
     if response.is_ok() {
-        println!("Torrent added");
         match db.set(&torrent.link, &torrent.title) {
             Ok(_) => log::info!("{:?} saved into db!", torrent.link),
             Err(err) => log::error!("Failed to save {:?} into db: {err:?}", torrent.link),
@@ -104,7 +103,6 @@ async fn fetch_torrents(
             .collect()
     }
     .await;
-    println!("Finished fetching torrents for {}", feed.name);
 
     Ok(torrents)
 }
