@@ -2,6 +2,7 @@ use std::fs::read_to_string;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
+use url::Url;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Config {
@@ -19,7 +20,7 @@ pub struct Persistence {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(try_from = "RawTransmission")]
 pub struct Transmission {
-    pub url: String,
+    pub url: Url,
     pub username: String,
     pub password: String,
 }
@@ -44,7 +45,7 @@ impl TryFrom<RawTransmission> for Transmission {
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct RawTransmission {
-    pub url: String,
+    pub url: Url,
     pub username: String,
     #[serde(flatten)]
     pub password: TransmissionPassword,
@@ -59,8 +60,8 @@ pub enum TransmissionPassword {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct RssFeed {
-    pub title: String,
-    pub url: String,
+    pub name: String,
+    pub url: Url,
     pub rules: Vec<DownloadRule>,
 }
 
@@ -68,4 +69,12 @@ pub struct RssFeed {
 pub struct DownloadRule {
     pub filter: String,
     pub download_dir: PathBuf,
+}
+
+impl DownloadRule {
+    pub fn check(&self, title: &str) -> bool {
+        self.filter
+            .split_whitespace()
+            .all(|word| title.contains(word))
+    }
 }

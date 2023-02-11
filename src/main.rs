@@ -1,5 +1,5 @@
 use transmission_rss::config::Config;
-use transmission_rss::rss::process_feed;
+use transmission_rss::rss;
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -18,31 +18,17 @@ struct Args {
     config: PathBuf,
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
     pretty_env_logger::formatted_builder()
         .filter(None, log::LevelFilter::Warn)
         .filter(Some("transmission_rss"), log::LevelFilter::Info)
         .parse_filters(&std::env::var("RUST_LOG").unwrap_or_default())
         .init();
 
-    // Read env
     let args = Args::parse();
 
-    // Read initial config file
-    let file = fs::read_to_string(&args.config)
-        .with_context(|| format!("Failed to open config file {:?}", args.config))?;
-
-    let cfg: Config = toml::from_str(&file).context("Config file is invalid")?;
-
-    for feed in &cfg.rss_feeds {
-        for rule in &feed.rules {
-            let dir = cfg.base_download_dir.join(&rule.download_dir);
-            if let Err(err) = ensure_exists(&dir) {
-                log::error!("{err}");
-            }
-        }
-    }
+    let cfg = load_config(&args.config)?;
+    // let cfg = Rc::new(cfg);
 
     // Open the database
     let db = kv::Store::open(&cfg.persistence.path)
@@ -53,15 +39,45 @@ async fn main() -> Result<()> {
         user: cfg.transmission.username.clone(),
         password: cfg.transmission.password.clone(),
     };
-    let mut client = TransClient::with_auth(&cfg.transmission.url, basic_auth);
+    let mut client = TransClient::with_auth(cfg.transmission.url, basic_auth);
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
 
     for feed in cfg.rss_feeds {
-        if let Err(err) = process_feed(&feed, &db, &mut client, &cfg.base_download_dir).await {
-            log::error!("Error while processing feed `{}`: {err}", &feed.title);
-        }
+        runtime.block_on(rss::check_feed(
+            feed,
+            &db,
+            &cfg.base_download_dir,
+            &mut client,
+        ));
     }
 
     Ok(())
+}
+
+fn load_config(path: &Path) -> Result<Config> {
+    let file =
+        fs::read_to_string(path).with_context(|| format!("Failed to open config file {path:?}"))?;
+
+    let mut cfg: Config = toml::from_str(&file).context("Config file is invalid")?;
+
+    for feed in &mut cfg.rss_feeds {
+        // Only keep rules with a valid download directory
+        feed.rules.retain(|rule| {
+            let dir = cfg.base_download_dir.join(&rule.download_dir);
+            if let Err(err) = ensure_exists(&dir) {
+                log::error!("{err}");
+                false
+            } else {
+                true
+            }
+        });
+    }
+
+    Ok(cfg)
 }
 
 fn ensure_exists(dir: &Path) -> Result<()> {

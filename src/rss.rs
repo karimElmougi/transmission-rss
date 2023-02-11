@@ -1,70 +1,66 @@
 use crate::config::RssFeed;
 
 use std::error::Error;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use rss::{Channel, Item};
 use transmission_rpc::types::TorrentAddArgs;
 use transmission_rpc::TransClient;
 
-pub async fn process_feed(
-    feed: &RssFeed,
+pub struct Torrent {
+    pub link: String,
+    pub title: String,
+    pub download_dir: PathBuf,
+}
+
+pub async fn check_feed(
+    feed: RssFeed,
     db: &kv::Store<String>,
+    download_dir: &Path,
     client: &mut TransClient,
-    base_dir: &Path,
-) -> Result<(), Box<dyn Error + Send + Sync>> {
-    log::info!("Checking feed `{}`", feed.title);
-
-    // Fetch the url
-    let content = reqwest::get(&feed.url).await?.bytes().await?;
-    let channel = Channel::read_from(&content[..])?;
-
-    // Filters the results
-    let items = channel
-        .items()
-        .iter()
-        .filter_map(extract)
-        .filter(|(link, _)| !is_in_db(db, link));
-
-    for (link, title) in items {
-        for rule in &feed.rules {
-            if rule
-                .filter
-                .split_whitespace()
-                .all(|word| title.contains(word))
-            {
-                log::info!(
-                    "`{title}` matches rule `{}`, adding torrent...",
-                    rule.filter
-                );
-                let dir = base_dir.join(&rule.download_dir);
-                add_torrent(client, link, title, &dir, db).await?;
+) {
+    const TIMEOUT: Duration = Duration::from_secs(5);
+    let torrents =
+        match tokio::time::timeout(TIMEOUT, fetch_torrents(&feed, db, download_dir)).await {
+            Ok(Ok(torrents)) => torrents,
+            Ok(Err(err)) => {
+                log::error!("Couldn't fetch torrent for feed `{}`: {err}", feed.name);
+                return;
             }
+            Err(_) => {
+                log::error!("Connection timeout while fetching feed `{}`", feed.name);
+                return;
+            }
+        };
+
+    for torrent in torrents {
+        match tokio::time::timeout(TIMEOUT, add_torrent(client, &torrent, db)).await {
+            Ok(Ok(())) => (),
+            Ok(Err(err)) => log::error!("Error while adding torrent `{}`: {err}", torrent.title),
+            Err(_) => log::error!("Timeout while connecting to Transmission"),
         }
     }
-
-    Ok(())
 }
 
 async fn add_torrent(
     client: &mut TransClient,
-    link: &str,
-    title: &String,
-    download_dir: &Path,
+    torrent: &Torrent,
     db: &kv::Store<String>,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     // Add the torrent into transmission
     let add: TorrentAddArgs = TorrentAddArgs {
-        filename: Some(link.to_string()),
-        download_dir: Some(download_dir.to_string_lossy().to_string()),
+        filename: Some(torrent.link.to_string()),
+        download_dir: Some(torrent.download_dir.to_string_lossy().to_string()),
         ..TorrentAddArgs::default()
     };
 
     let response = client.torrent_add(add).await?;
     if response.is_ok() {
-        match db.set(link, title) {
-            Ok(_) => log::info!("{:?} saved into db!", &link),
-            Err(err) => log::error!("Failed to save {link:?} into db: {err:?}"),
+        println!("Torrent added");
+        match db.set(&torrent.link, &torrent.title) {
+            Ok(_) => log::info!("{:?} saved into db!", torrent.link),
+            Err(err) => log::error!("Failed to save {:?} into db: {err:?}", torrent.link),
         }
     } else {
         log::error!("Failed to add torrent");
@@ -73,15 +69,55 @@ async fn add_torrent(
     Ok(())
 }
 
-fn extract(item: &Item) -> Option<(&str, &String)> {
-    let link = match item.enclosure() {
+async fn fetch_torrents(
+    feed: &RssFeed,
+    db: &kv::Store<String>,
+    base_dir: &Path,
+) -> Result<Vec<Torrent>, Box<dyn Error + Send + Sync>> {
+    log::info!("Checking feed `{}`", feed.name);
+
+    // Fetch the url
+    let content = reqwest::get(feed.url.as_str()).await?.bytes().await?;
+    let channel = Channel::read_from(&content[..])?;
+
+    // Filters the results
+    let torrents = async {
+        channel
+            .into_items()
+            .into_iter()
+            .filter_map(extract_title_and_link)
+            .filter(|(link, _)| !is_in_db(db, link))
+            .filter_map(|(link, title)| {
+                for rule in &feed.rules {
+                    if rule.check(&title) {
+                        log::info!("`{title}` matches rule `{}`", rule.filter);
+                        let dir = base_dir.join(&rule.download_dir);
+                        return Some(Torrent {
+                            link,
+                            title,
+                            download_dir: dir,
+                        });
+                    }
+                }
+                None
+            })
+            .collect()
+    }
+    .await;
+    println!("Finished fetching torrents for {}", feed.name);
+
+    Ok(torrents)
+}
+
+fn extract_title_and_link(item: Item) -> Option<(String, String)> {
+    let link = match item.enclosure {
         Some(enclosure) if enclosure.mime_type() == "application/x-bittorrent" => {
-            Some(enclosure.url())
+            Some(enclosure.url)
         }
-        _ => item.link(),
+        _ => item.link,
     };
 
-    match (link, &item.title) {
+    match (link, item.title) {
         (Some(link), Some(title)) => Some((link, title)),
         (None, Some(title)) => {
             log::warn!("No link for `{title}`");
