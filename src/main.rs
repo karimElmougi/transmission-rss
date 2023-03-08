@@ -6,8 +6,9 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use clap::Parser;
+use futures::future::join_all;
 use transmission_rpc::types::BasicAuth;
-use transmission_rpc::TransClient;
+use transmission_rpc::SharableTransClient;
 
 /// Parse args
 #[derive(Parser, Debug)]
@@ -28,7 +29,6 @@ fn main() -> Result<()> {
     let args = Args::parse();
 
     let cfg = load_config(&args.config)?;
-    // let cfg = Rc::new(cfg);
 
     // Open the database
     let db = kv::Store::open(&cfg.persistence.path)
@@ -39,21 +39,18 @@ fn main() -> Result<()> {
         user: cfg.transmission.username.clone(),
         password: cfg.transmission.password.clone(),
     };
-    let mut client = TransClient::with_auth(cfg.transmission.url, basic_auth);
+    let client = SharableTransClient::with_auth(cfg.transmission.url, basic_auth);
 
-    let runtime = tokio::runtime::Builder::new_current_thread()
+    let tasks = cfg
+        .rss_feeds
+        .into_iter()
+        .map(|feed| rss::check_feed(feed, &db, &cfg.base_download_dir, &client));
+
+    tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
-        .unwrap();
-
-    for feed in cfg.rss_feeds {
-        runtime.block_on(rss::check_feed(
-            feed,
-            &db,
-            &cfg.base_download_dir,
-            &mut client,
-        ));
-    }
+        .unwrap()
+        .block_on(join_all(tasks));
 
     Ok(())
 }

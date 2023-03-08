@@ -10,17 +10,18 @@ license = "MIT"
 [dependencies]
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
+futures = "0.3"
 kv = { git = "https://github.com/karimElmougi/kv.git" }
 log = "0.4.17"
 pretty_env_logger = "0.4"
 reqwest = { version = "0.11" }
 rss = "2.0"
-url = { version = "*", features = ["serde"] }
 serde = { version = "1.0.136", features = ["derive"] }
 serde_json = "1.0"
 tokio = { version = "1", features = ["full"] }
 toml = "0.5"
-transmission-rpc = "0.4"
+transmission-rpc = { version = "0.4", features = ["sync"] }
+url = { version = "*", features = ["serde"] }
 
 [dev-dependencies]
 httpmock = "0.6.6"

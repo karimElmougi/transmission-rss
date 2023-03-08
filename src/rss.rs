@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use rss::{Channel, Item};
 use transmission_rpc::types::TorrentAddArgs;
-use transmission_rpc::TransClient;
+use transmission_rpc::SharableTransClient;
 
 pub struct Torrent {
     pub link: String,
@@ -18,7 +18,7 @@ pub async fn check_feed(
     feed: RssFeed,
     db: &kv::Store<String>,
     download_dir: &Path,
-    client: &mut TransClient,
+    client: &SharableTransClient,
 ) {
     const TIMEOUT: Duration = Duration::from_secs(5);
     let torrents =
@@ -44,11 +44,10 @@ pub async fn check_feed(
 }
 
 async fn add_torrent(
-    client: &mut TransClient,
+    client: &SharableTransClient,
     torrent: &Torrent,
     db: &kv::Store<String>,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
-    // Add the torrent into transmission
     let add: TorrentAddArgs = TorrentAddArgs {
         filename: Some(torrent.link.to_string()),
         download_dir: Some(torrent.download_dir.to_string_lossy().to_string()),
@@ -73,33 +72,17 @@ async fn fetch_torrents(
     db: &kv::Store<String>,
     base_dir: &Path,
 ) -> Result<Vec<Torrent>, Box<dyn Error + Send + Sync>> {
-    log::info!("Checking feed `{}`", feed.name);
-
     // Fetch the url
     let content = reqwest::get(feed.url.as_str()).await?.bytes().await?;
     let channel = Channel::read_from(&content[..])?;
 
-    // Filters the results
     let torrents = async {
         channel
             .into_items()
             .into_iter()
             .filter_map(extract_title_and_link)
             .filter(|(link, _)| !is_in_db(db, link))
-            .filter_map(|(link, title)| {
-                for rule in &feed.rules {
-                    if rule.check(&title) {
-                        log::info!("`{title}` matches rule `{}`", rule.filter);
-                        let dir = base_dir.join(&rule.download_dir);
-                        return Some(Torrent {
-                            link,
-                            title,
-                            download_dir: dir,
-                        });
-                    }
-                }
-                None
-            })
+            .filter_map(|(link, title)| check_rules(feed, base_dir, link, title))
             .collect()
     }
     .await;
@@ -138,4 +121,18 @@ fn is_in_db(db: &kv::Store<String>, link: &str) -> bool {
             false
         }
     }
+}
+
+fn check_rules(feed: &RssFeed, base_dir: &Path, link: String, title: String) -> Option<Torrent> {
+    for rule in &feed.rules {
+        if rule.check(&title) {
+            log::info!("`{}`:`{title}` matches rule `{}`", feed.name, rule.filter);
+            return Some(Torrent {
+                link,
+                title,
+                download_dir: base_dir.join(&rule.download_dir),
+            });
+        }
+    }
+    None
 }
