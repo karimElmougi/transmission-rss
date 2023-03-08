@@ -56,9 +56,8 @@ async fn add_torrent(
 
     let response = client.torrent_add(add).await?;
     if response.is_ok() {
-        match db.set(&torrent.link, &torrent.title) {
-            Ok(_) => log::info!("{:?} saved into db!", torrent.link),
-            Err(err) => log::error!("Failed to save {:?} into db: {err:?}", torrent.link),
+        if let Err(err) = async { db.set(&torrent.link, &torrent.title) }.await {
+            log::error!("Failed to save {:?} into db: {err:?}", torrent.link);
         }
     } else {
         log::error!("Failed to add torrent");
@@ -126,7 +125,7 @@ fn is_in_db(db: &kv::Store<String>, link: &str) -> bool {
 fn check_rules(feed: &RssFeed, base_dir: &Path, link: String, title: String) -> Option<Torrent> {
     for rule in &feed.rules {
         if rule.check(&title) {
-            log::info!("`{}`:`{title}` matches rule `{}`", feed.name, rule.filter);
+            log::info!("{}:`{title}` matches rule `{}`", feed.name, rule.filter);
             return Some(Torrent {
                 link,
                 title,
