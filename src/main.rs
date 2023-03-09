@@ -1,5 +1,5 @@
 use transmission_rss::config::Config;
-use transmission_rss::rss;
+use transmission_rss::{add_torrent, rss};
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -30,27 +30,34 @@ fn main() -> Result<()> {
 
     let cfg = load_config(&args.config)?;
 
-    // Open the database
     let db = kv::Store::open(&cfg.persistence.path)
         .with_context(|| format!("Unable to open persistence file {:?}", cfg.persistence.path))?;
 
-    // Creates a new connection
     let basic_auth = BasicAuth {
         user: cfg.transmission.username.clone(),
         password: cfg.transmission.password.clone(),
     };
-    let client = SharableTransClient::with_auth(cfg.transmission.url, basic_auth);
+    let transmission_client = SharableTransClient::with_auth(cfg.transmission.url, basic_auth);
 
-    let tasks = cfg
+    let rss_client = rss::Client::new(db.clone(), cfg.base_download_dir);
+
+    let fetch_tasks = cfg
         .rss_feeds
         .into_iter()
-        .map(|feed| rss::check_feed(feed, &db, &cfg.base_download_dir, &client));
+        .map(|feed| rss_client.check_feed(feed));
 
-    tokio::runtime::Builder::new_current_thread()
+    let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
-        .unwrap()
-        .block_on(join_all(tasks));
+        .unwrap();
+
+    let add_tasks = runtime
+        .block_on(join_all(fetch_tasks))
+        .into_iter()
+        .flatten()
+        .map(|torrent| add_torrent(&transmission_client, torrent, &db));
+
+    runtime.block_on(join_all(add_tasks));
 
     Ok(())
 }

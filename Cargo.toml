@@ -12,7 +12,7 @@ anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 futures = "0.3"
 kv = { git = "https://github.com/karimElmougi/kv.git" }
-log = "0.4.17"
+log = "0.4"
 pretty_env_logger = "0.4"
 reqwest = { version = "0.11" }
 rss = "2.0"
@@ -22,10 +22,6 @@ tokio = { version = "1", features = ["full"] }
 toml = "0.7"
 transmission-rpc = { version = "0.4", features = ["sync"] }
 url = { version = "*", features = ["serde"] }
-
-[dev-dependencies]
-httpmock = "0.6.6"
-tokio-test = "0.4.2"
 
 [profile.release]
 lto = true
