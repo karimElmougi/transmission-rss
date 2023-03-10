@@ -2,35 +2,22 @@
 A simple binary that reads a config file with a list of rss torrent items and adds them
 to transmission.
 
-```
-$ transmission-rss
-USAGE:
-    transmission-rss --config <CONFIG>
-
-OPTIONS:
-    -c, --config <CONFIG>    Path to the config file
-    -h, --help               Print help information
-    -V, --version            Print version information
-                                                        
-```
-
 ### Getting started
 If you have cargo installed it's possible to install the binary by running:
 
 ```
-$ cargo install transmission-rss
-$ transmission-rss -c config.toml
+$ cargo install --git https://github.com/karimElmougi/transmission-rss
+$ transmission-rss
 ```
 
 ### Config file
+
+The config is located at `$HOME/.config/transmission-rss/config.toml`.
 
 Example of `config.toml`:
 
 ```toml
 base_download_dir = "/downloads/"
-
-[persistence]
-path = "/path/to/db/folder"
 
 [transmission]
 url = "http://myserver/transmission/rpc"
