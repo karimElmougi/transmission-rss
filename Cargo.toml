@@ -9,10 +9,10 @@ license = "MIT"
 
 [dependencies]
 anyhow = "1"
-clap = { version = "4", features = ["derive"] }
 futures = "0.3"
 kv = { git = "https://github.com/karimElmougi/kv.git" }
 log = "0.4"
+home = "0.5"
 pretty_env_logger = "0.4"
 reqwest = { version = "0.11" }
 rss = "2.0"

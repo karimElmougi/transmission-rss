@@ -7,14 +7,8 @@ use url::Url;
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Config {
     pub base_download_dir: PathBuf,
-    pub persistence: Persistence,
     pub transmission: Transmission,
     pub rss_feeds: Vec<RssFeed>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct Persistence {
-    pub path: PathBuf,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

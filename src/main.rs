@@ -1,3 +1,4 @@
+#![cfg(unix)]
 use transmission_rss::config::Config;
 use transmission_rss::{add_torrent, rss};
 
@@ -5,19 +6,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use clap::Parser;
 use futures::future::join_all;
+use home::home_dir;
 use transmission_rpc::types::BasicAuth;
 use transmission_rpc::SharableTransClient;
-
-/// Parse args
-#[derive(Parser, Debug)]
-#[clap(author, version, about, long_about = None)]
-struct Args {
-    /// Path to the config file
-    #[clap(short, long)]
-    config: PathBuf,
-}
 
 fn main() -> Result<()> {
     pretty_env_logger::formatted_builder()
@@ -26,12 +18,14 @@ fn main() -> Result<()> {
         .parse_filters(&std::env::var("RUST_LOG").unwrap_or_default())
         .init();
 
-    let args = Args::parse();
+    let config_dir = config_dir_path()?;
 
-    let cfg = load_config(&args.config)?;
+    let config_path = config_dir.join("config.toml");
+    let cfg = load_config(&config_path)?;
 
-    let db = kv::Store::open(&cfg.persistence.path)
-        .with_context(|| format!("Unable to open persistence file {:?}", cfg.persistence.path))?;
+    let db_path = config_dir.join("links.db");
+    let db = kv::Store::open(&db_path)
+        .with_context(|| format!("Unable to open persistence file {db_path:?}"))?;
 
     let basic_auth = BasicAuth {
         user: cfg.transmission.username.clone(),
@@ -82,6 +76,12 @@ fn load_config(path: &Path) -> Result<Config> {
     }
 
     Ok(cfg)
+}
+
+fn config_dir_path() -> Result<PathBuf> {
+    let mut path = home_dir().context("Unable to locate use home directory, is $HOME set?")?;
+    path.push(".config/transmission-rss");
+    Ok(path)
 }
 
 fn ensure_exists(dir: &Path) -> Result<()> {
