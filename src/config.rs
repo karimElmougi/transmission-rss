@@ -63,6 +63,8 @@ pub struct RssFeed {
 pub struct DownloadRule {
     pub filter: String,
     pub download_dir: PathBuf,
+    #[serde(default)]
+    pub labels: Vec<String>,
 }
 
 impl DownloadRule {

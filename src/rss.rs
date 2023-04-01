@@ -107,6 +107,7 @@ fn check_rules(feed: &RssFeed, base_dir: &Path, link: String, title: String) -> 
                 link,
                 title,
                 download_dir: base_dir.join(&rule.download_dir),
+                labels: rule.labels.clone(),
             });
         }
     }
