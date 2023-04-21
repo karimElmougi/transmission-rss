@@ -1,6 +1,6 @@
 #![cfg(unix)]
 use transmission_rss::config::Config;
-use transmission_rss::{add_torrent, rss};
+use transmission_rss::{rss, TransmissionClient};
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -8,8 +8,6 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use futures::future::join_all;
 use home::home_dir;
-use transmission_rpc::types::BasicAuth;
-use transmission_rpc::SharableTransClient;
 
 fn main() -> Result<()> {
     pretty_env_logger::formatted_builder()
@@ -27,11 +25,7 @@ fn main() -> Result<()> {
     let db = kv::Store::open(&db_path)
         .with_context(|| format!("Unable to open persistence file {db_path:?}"))?;
 
-    let basic_auth = BasicAuth {
-        user: cfg.transmission.username.clone(),
-        password: cfg.transmission.password.clone(),
-    };
-    let transmission_client = SharableTransClient::with_auth(cfg.transmission.url, basic_auth);
+    let transmission_client = TransmissionClient::new(&cfg, db.clone());
 
     let rss_client = rss::Client::new(db.clone(), cfg.base_download_dir);
 
@@ -49,7 +43,7 @@ fn main() -> Result<()> {
         .block_on(join_all(fetch_tasks))
         .into_iter()
         .flatten()
-        .map(|torrent| add_torrent(&transmission_client, torrent, &db));
+        .map(|torrent| transmission_client.add(torrent));
 
     runtime.block_on(join_all(add_tasks));
 
