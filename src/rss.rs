@@ -10,14 +10,20 @@ use tokio::time::timeout;
 pub struct Client {
     http_client: reqwest::Client,
     db: kv::Store<String>,
+    retry_db: kv::Store<Torrent>,
     base_download_dir: PathBuf,
 }
 
 impl Client {
-    pub fn new(db: kv::Store<String>, base_download_dir: PathBuf) -> Self {
+    pub fn new(
+        db: kv::Store<String>,
+        retry_db: kv::Store<Torrent>,
+        base_download_dir: PathBuf,
+    ) -> Self {
         Self {
             http_client: reqwest::Client::new(),
             db,
+            retry_db,
             base_download_dir,
         }
     }
@@ -56,13 +62,17 @@ impl Client {
                 .into_items()
                 .into_iter()
                 .filter_map(extract_title_and_link)
-                .filter(|(link, _)| !is_in_db(&self.db, link))
+                .filter(|(link, _)| !self.was_processed(link))
                 .filter_map(|(link, title)| check_rules(feed, &self.base_download_dir, link, title))
                 .collect()
         }
         .await;
 
         Ok(torrents)
+    }
+
+    fn was_processed(&self, link: &str) -> bool {
+        is_in_db(&self.db, link) || is_in_db(&self.retry_db, link)
     }
 }
 
@@ -88,15 +98,11 @@ fn extract_title_and_link(item: Item) -> Option<(String, String)> {
     }
 }
 
-fn is_in_db(db: &kv::Store<String>, link: &str) -> bool {
-    match db.get(link) {
-        Ok(Some(_)) => true,
-        Ok(None) => false,
-        Err(err) => {
-            log::error!("Error looking for `{link}` in database: {err}");
-            false
-        }
-    }
+fn is_in_db<T>(db: &kv::Store<T>, link: &str) -> bool {
+    db.contains(link).unwrap_or_else(|err| {
+        log::error!("Error looking for `{link}` in database: {err}");
+        false
+    })
 }
 
 fn check_rules(feed: &RssFeed, base_dir: &Path, link: String, title: String) -> Option<Torrent> {

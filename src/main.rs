@@ -1,6 +1,6 @@
 #![cfg(unix)]
 use transmission_rss::config::Config;
-use transmission_rss::{rss, TransmissionClient};
+use transmission_rss::{rss, transmission};
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -25,9 +25,13 @@ fn main() -> Result<()> {
     let db = kv::Store::open(&db_path)
         .with_context(|| format!("Unable to open persistence file {db_path:?}"))?;
 
-    let transmission_client = TransmissionClient::new(&cfg, db.clone());
+    let retry_db_path = config_dir.join("retry.db");
+    let retry_db = kv::Store::open(&retry_db_path)
+        .with_context(|| format!("Unable to open retry file {retry_db_path:?}"))?;
 
-    let rss_client = rss::Client::new(db.clone(), cfg.base_download_dir);
+    let transmission_client = transmission::Client::new(&cfg, db.clone(), retry_db.clone());
+
+    let rss_client = rss::Client::new(db, retry_db, cfg.base_download_dir);
 
     let fetch_tasks = cfg
         .rss_feeds
@@ -46,6 +50,7 @@ fn main() -> Result<()> {
         .map(|torrent| transmission_client.add(torrent));
 
     runtime.block_on(join_all(add_tasks));
+    runtime.block_on(transmission_client.retry_missing());
 
     Ok(())
 }
