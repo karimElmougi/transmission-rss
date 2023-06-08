@@ -2,7 +2,6 @@ use crate::config::Config;
 use crate::{Torrent, TIMEOUT};
 
 use anyhow::{anyhow, Result};
-use tokio::time::error::Elapsed;
 use tokio::time::timeout;
 use transmission_rpc::types::{BasicAuth, TorrentAddArgs};
 use transmission_rpc::SharableTransClient;
@@ -38,7 +37,7 @@ impl Client {
         };
 
         for (link, torrent) in torrents_to_retry {
-            if let Err(err) = flatten(timeout(TIMEOUT, self.add_impl(&torrent)).await) {
+            if let Err(err) = self.add_with_timeout(&torrent).await {
                 log::error!("{err}");
             } else if let Err(err) = self.retry_db.unset(&link) {
                 log::error!("Unable to remove `{}` from retry.db: {err}", torrent.title);
@@ -47,7 +46,7 @@ impl Client {
     }
 
     pub async fn add(&self, torrent: Torrent) {
-        if let Err(err) = flatten(timeout(TIMEOUT, self.add_impl(&torrent)).await) {
+        if let Err(err) = self.add_with_timeout(&torrent).await {
             log::error!("{err}");
             if let Err(err) = async { self.retry_db.set(&torrent.link, &torrent) }.await {
                 log::error!(
@@ -55,6 +54,14 @@ impl Client {
                     torrent.title
                 );
             }
+        }
+    }
+
+    async fn add_with_timeout(&self, torrent: &Torrent) -> Result<()> {
+        match timeout(TIMEOUT, self.add_impl(torrent)).await {
+            Ok(Ok(t)) => Ok(t),
+            Ok(Err(err)) => Err(err),
+            Err(_) => Err(anyhow!("Timeout while adding torrent {}", torrent.title)),
         }
     }
 
@@ -89,13 +96,5 @@ impl Client {
         }
 
         Ok(())
-    }
-}
-
-fn flatten<T>(r: Result<Result<T>, Elapsed>) -> Result<T> {
-    match r {
-        Ok(Ok(t)) => Ok(t),
-        Ok(Err(err)) => Err(err),
-        Err(_) => Err(anyhow!("Timeout while adding torrent")),
     }
 }
