@@ -24,23 +24,14 @@ url = "http://myserver/transmission/rpc"
 username = "myusername"
 password = "mypassword"
 
-[[rss_list]]
-title = "My List"
-url = "https://someweb.site/rss.xml"
-filters = ["1080p"]
-download_dir = "/downloads/my_folder"
-
 [[rss_feeds]]
-title = "My Feed"
-url = "https://someweb.site/rss.xml"
+name = "Some RSS Feed"
+url = "https://someweb.site/rss.rss.xml"
 
 [[rss_feeds.rules]]
-filter = "1080p"
-download_dir = "1080p"
-
-[[rss_feeds.rules]]
-filter = "4k"
-download_dir = "4k"
+filter = "Some Show"
+download_dir = "some_show/"
+labels = ["TV", "Season 02"]
 ```
 
 The password can optionally be loaded from a separate file by specifying `password_file` instead.
