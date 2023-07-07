@@ -2,7 +2,6 @@ use crate::config::RssFeed;
 use crate::{Torrent, TIMEOUT};
 
 use std::error::Error;
-use std::path::{Path, PathBuf};
 
 use rss::{Channel, Item};
 use tokio::time::timeout;
@@ -11,20 +10,14 @@ pub struct Client {
     http_client: reqwest::Client,
     db: kv::Store<String>,
     retry_db: kv::Store<Torrent>,
-    base_download_dir: PathBuf,
 }
 
 impl Client {
-    pub fn new(
-        db: kv::Store<String>,
-        retry_db: kv::Store<Torrent>,
-        base_download_dir: PathBuf,
-    ) -> Self {
+    pub fn new(db: kv::Store<String>, retry_db: kv::Store<Torrent>) -> Self {
         Self {
             http_client: reqwest::Client::new(),
             db,
             retry_db,
-            base_download_dir,
         }
     }
 
@@ -63,7 +56,7 @@ impl Client {
                 .into_iter()
                 .filter_map(extract_title_and_link)
                 .filter(|(link, _)| !self.was_processed(link))
-                .filter_map(|(link, title)| check_rules(feed, &self.base_download_dir, link, title))
+                .filter_map(|(link, title)| check_rules(feed, link, title))
                 .collect()
         }
         .await;
@@ -105,14 +98,14 @@ fn is_in_db<T>(db: &kv::Store<T>, link: &str) -> bool {
     })
 }
 
-fn check_rules(feed: &RssFeed, base_dir: &Path, link: String, title: String) -> Option<Torrent> {
+fn check_rules(feed: &RssFeed, link: String, title: String) -> Option<Torrent> {
     for rule in &feed.rules {
         if rule.check(&title) {
             log::info!("{}:`{title}` matches rule `{}`", feed.name, rule.filter);
             return Some(Torrent {
                 link,
                 title,
-                download_dir: base_dir.join(&rule.download_dir),
+                download_dir: rule.download_dir.clone(),
                 labels: rule.labels.clone(),
             });
         }

@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 const TIMEOUT: Duration = Duration::from_secs(5);
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Torrent {
     pub link: String,
     pub title: String,

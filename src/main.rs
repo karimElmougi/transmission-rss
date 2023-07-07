@@ -31,17 +31,17 @@ fn main() -> Result<()> {
 
     let transmission_client = transmission::Client::new(&cfg, db.clone(), retry_db.clone());
 
-    let rss_client = rss::Client::new(db, retry_db, cfg.base_download_dir);
-
-    let fetch_tasks = cfg
-        .rss_feeds
-        .into_iter()
-        .map(|feed| rss_client.check_feed(feed));
+    let rss_client = rss::Client::new(db, retry_db);
 
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .unwrap();
+
+    let fetch_tasks = cfg
+        .rss_feeds
+        .into_iter()
+        .map(|feed| rss_client.check_feed(feed));
 
     let add_tasks = runtime
         .block_on(join_all(fetch_tasks))

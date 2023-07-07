@@ -1,6 +1,8 @@
 use crate::config::Config;
 use crate::{Torrent, TIMEOUT};
 
+use std::path::PathBuf;
+
 use anyhow::{anyhow, Result};
 use tokio::time::timeout;
 use transmission_rpc::types::{BasicAuth, TorrentAddArgs};
@@ -10,6 +12,7 @@ pub struct Client {
     inner: SharableTransClient,
     db: kv::Store<String>,
     retry_db: kv::Store<Torrent>,
+    base_download_dir: PathBuf,
 }
 
 impl Client {
@@ -24,6 +27,7 @@ impl Client {
             inner,
             db,
             retry_db,
+            base_download_dir: cfg.base_download_dir.clone(),
         }
     }
 
@@ -66,9 +70,11 @@ impl Client {
     }
 
     async fn add_impl(&self, torrent: &Torrent) -> Result<()> {
+        let download_dir = self.base_download_dir.join(&torrent.download_dir);
+
         let add: TorrentAddArgs = TorrentAddArgs {
             filename: Some(torrent.link.to_string()),
-            download_dir: Some(torrent.download_dir.to_string_lossy().to_string()),
+            download_dir: Some(download_dir.to_string_lossy().to_string()),
             labels: Some(torrent.labels.clone()),
             ..TorrentAddArgs::default()
         };
