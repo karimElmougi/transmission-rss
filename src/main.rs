@@ -59,40 +59,11 @@ fn load_config(path: &Path) -> Result<Config> {
     let file =
         fs::read_to_string(path).with_context(|| format!("Failed to open config file {path:?}"))?;
 
-    let mut cfg: Config = toml::from_str(&file).context("Config file is invalid")?;
-
-    for feed in &mut cfg.rss_feeds {
-        // Only keep rules with a valid download directory
-        feed.rules.retain(|rule| {
-            let dir = cfg.base_download_dir.join(&rule.download_dir);
-            if let Err(err) = ensure_exists(&dir) {
-                log::error!("{err}");
-                false
-            } else {
-                true
-            }
-        });
-    }
-
-    Ok(cfg)
+    toml::from_str(&file).context("Config file is invalid")
 }
 
 fn config_dir_path() -> Result<PathBuf> {
     let mut path = home_dir().context("Unable to locate use home directory, is $HOME set?")?;
     path.push(".config/transmission-rss");
     Ok(path)
-}
-
-fn ensure_exists(dir: &Path) -> Result<()> {
-    let exists = dir
-        .try_exists()
-        .with_context(|| format!("Couldn't access directory {dir:?}"))?;
-
-    if !exists {
-        log::info!("Creating directory {dir:?}");
-        std::fs::create_dir_all(dir)
-            .with_context(|| format!("Unable to create directory {dir:?}"))?;
-    }
-
-    Ok(())
 }
