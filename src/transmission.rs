@@ -41,6 +41,7 @@ impl Client {
         };
 
         for (link, torrent) in torrents_to_retry {
+            log::info!("Retrying {}", torrent.title);
             if let Err(err) = self.add_with_timeout(&torrent).await {
                 log::error!("{err}");
             } else if let Err(err) = self.retry_db.unset(&link) {
