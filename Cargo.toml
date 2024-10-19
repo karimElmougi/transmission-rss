@@ -13,15 +13,15 @@ futures = "0.3"
 kv = { git = "https://github.com/karimElmougi/kv.git" }
 log = "0.4"
 home = "0.5"
-pretty_env_logger = "0.4"
-reqwest = { version = "0.11" }
+pretty_env_logger = "0.5"
+reqwest = { version = "0.12" }
 rss = "2.0"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }
-toml = "0.7"
+toml = "0.8"
 transmission-rpc = { version = "0.4", features = ["sync"] }
-url = { version = "*", features = ["serde"] }
+url = { version = "2", features = ["serde"] }
 
 [profile.release]
 lto = true
