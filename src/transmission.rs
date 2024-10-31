@@ -58,7 +58,7 @@ impl Client {
         const TIMEOUT: Duration = Duration::from_secs(5);
         let response = self
             .runtime
-            .block_on(timeout(TIMEOUT, self.inner.torrent_add(add)))
+            .block_on(async { timeout(TIMEOUT, self.inner.torrent_add(add)).await })
             .map_err(|_| Error::Timeout)?
             .map_err(|err| Error::Connection(err.to_string()))?;
 

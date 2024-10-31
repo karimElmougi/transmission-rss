@@ -90,6 +90,7 @@ fn add_torrents(
     torrents: impl Iterator<Item = Torrent>,
 ) {
     for torrent in torrents {
+        log::info!("`{}` matches rule `{}`", torrent.title, torrent.rule);
         match client.add(&torrent) {
             Ok(()) => {
                 if let Err(err) = db.set(&torrent.link, &torrent.title) {

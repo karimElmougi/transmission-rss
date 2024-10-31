@@ -44,12 +44,12 @@ fn extract_title_and_link(item: rss::Item) -> Option<(String, String)> {
 fn check_rules(feed: &RssFeed, link: String, title: String) -> Option<Torrent> {
     for rule in &feed.rules {
         if rule.check(&title) {
-            log::info!("{}:`{title}` matches rule `{}`", feed.name, rule.filter);
             return Some(Torrent {
                 link,
                 title,
                 download_dir: rule.download_dir.clone(),
                 labels: rule.labels.clone(),
+                rule: rule.filter.clone(),
             });
         }
     }

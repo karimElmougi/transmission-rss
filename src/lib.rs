@@ -12,4 +12,6 @@ pub struct Torrent {
     pub title: String,
     pub download_dir: PathBuf,
     pub labels: Vec<String>,
+    #[serde(skip)]
+    pub rule: String,
 }
