@@ -3,9 +3,6 @@ use crate::{Torrent, TIMEOUT};
 
 use std::error::Error;
 
-use rss::{Channel, Item};
-use tokio::time::timeout;
-
 pub struct Client {
     http_client: reqwest::Client,
     db: kv::Store<String>,
@@ -22,17 +19,7 @@ impl Client {
     }
 
     pub async fn check_feed(&self, feed: RssFeed) -> Vec<Torrent> {
-        match timeout(TIMEOUT, self.fetch_torrents(&feed)).await {
-            Ok(Ok(torrents)) => torrents,
-            Ok(Err(err)) => {
-                log::error!("Couldn't fetch torrent for feed `{}`: {err}", feed.name);
-                vec![]
-            }
-            Err(_) => {
-                log::error!("Connection timeout while fetching feed `{}`", feed.name);
-                vec![]
-            }
-        }
+        self.fetch_torrents(&feed).await.unwrap_or(Vec::new())
     }
 
     async fn fetch_torrents(
@@ -43,23 +30,21 @@ impl Client {
         let content = self
             .http_client
             .get(feed.url.as_str())
+            .timeout(TIMEOUT)
             .send()
             .await?
             .bytes()
             .await?;
 
-        let channel = Channel::read_from(&content[..])?;
+        let channel = rss::Channel::read_from(&content[..])?;
 
-        let torrents = async {
-            channel
-                .into_items()
-                .into_iter()
-                .filter_map(extract_title_and_link)
-                .filter(|(link, _)| !self.was_processed(link))
-                .filter_map(|(link, title)| check_rules(feed, link, title))
-                .collect()
-        }
-        .await;
+        let torrents = channel
+            .into_items()
+            .into_iter()
+            .filter_map(extract_title_and_link)
+            .filter(|(link, _)| !self.was_processed(link))
+            .filter_map(|(link, title)| check_rules(feed, link, title))
+            .collect();
 
         Ok(torrents)
     }
@@ -69,7 +54,7 @@ impl Client {
     }
 }
 
-fn extract_title_and_link(item: Item) -> Option<(String, String)> {
+fn extract_title_and_link(item: rss::Item) -> Option<(String, String)> {
     let link = match item.enclosure {
         Some(enclosure) if enclosure.mime_type() == "application/x-bittorrent" => {
             Some(enclosure.url)
