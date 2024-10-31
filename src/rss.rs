@@ -1,57 +1,22 @@
 use crate::config::RssFeed;
-use crate::{Torrent, TIMEOUT};
+use crate::Torrent;
 
 use std::error::Error;
 
-pub struct Client {
-    http_client: reqwest::Client,
-    db: kv::Store<String>,
-    retry_db: kv::Store<Torrent>,
-}
+pub fn check_feed(feed: &RssFeed) -> Result<Vec<Torrent>, Box<dyn Error + Send + Sync>> {
+    // Fetch the url
+    let content = reqwest::blocking::get(feed.url.as_str())?.bytes()?;
 
-impl Client {
-    pub fn new(db: kv::Store<String>, retry_db: kv::Store<Torrent>) -> Self {
-        Self {
-            http_client: reqwest::Client::new(),
-            db,
-            retry_db,
-        }
-    }
+    let channel = rss::Channel::read_from(&content[..])?;
 
-    pub async fn check_feed(&self, feed: RssFeed) -> Vec<Torrent> {
-        self.fetch_torrents(&feed).await.unwrap_or(Vec::new())
-    }
+    let torrents = channel
+        .into_items()
+        .into_iter()
+        .filter_map(extract_title_and_link)
+        .filter_map(|(link, title)| check_rules(feed, link, title))
+        .collect();
 
-    async fn fetch_torrents(
-        &self,
-        feed: &RssFeed,
-    ) -> Result<Vec<Torrent>, Box<dyn Error + Send + Sync>> {
-        // Fetch the url
-        let content = self
-            .http_client
-            .get(feed.url.as_str())
-            .timeout(TIMEOUT)
-            .send()
-            .await?
-            .bytes()
-            .await?;
-
-        let channel = rss::Channel::read_from(&content[..])?;
-
-        let torrents = channel
-            .into_items()
-            .into_iter()
-            .filter_map(extract_title_and_link)
-            .filter(|(link, _)| !self.was_processed(link))
-            .filter_map(|(link, title)| check_rules(feed, link, title))
-            .collect();
-
-        Ok(torrents)
-    }
-
-    fn was_processed(&self, link: &str) -> bool {
-        is_in_db(&self.db, link) || is_in_db(&self.retry_db, link)
-    }
+    Ok(torrents)
 }
 
 fn extract_title_and_link(item: rss::Item) -> Option<(String, String)> {
@@ -74,13 +39,6 @@ fn extract_title_and_link(item: rss::Item) -> Option<(String, String)> {
         }
         _ => None,
     }
-}
-
-fn is_in_db<T>(db: &kv::Store<T>, link: &str) -> bool {
-    db.contains(link).unwrap_or_else(|err| {
-        log::error!("Error looking for `{link}` in database: {err}");
-        false
-    })
 }
 
 fn check_rules(feed: &RssFeed, link: String, title: String) -> Option<Torrent> {

@@ -3,11 +3,8 @@ pub mod rss;
 pub mod transmission;
 
 use std::path::PathBuf;
-use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
-
-const TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Torrent {

@@ -1,13 +1,13 @@
 #![cfg(unix)]
 use transmission_rss::config::Config;
-use transmission_rss::{rss, transmission};
+use transmission_rss::{rss, transmission, Torrent};
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use futures::future::join_all;
 use home::home_dir;
+use rustc_hash::FxHashMap;
 
 fn main() -> Result<()> {
     pretty_env_logger::formatted_builder()
@@ -29,28 +29,25 @@ fn main() -> Result<()> {
     let retry_db = kv::Store::open(&retry_db_path)
         .with_context(|| format!("Unable to open retry file {retry_db_path:?}"))?;
 
-    let transmission_client = transmission::Client::new(&cfg, db.clone(), retry_db.clone());
+    let links = db.load_map().with_context(|| "Unable to read link db")?;
+    let retry_links = retry_db
+        .load_map()
+        .with_context(|| "Unable to read retry db")?;
 
-    let rss_client = rss::Client::new(db, retry_db);
+    let torrents = fetch_new_torrents(&cfg, &links, &retry_links);
 
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
+    let transmission_client = transmission::Client::new(&cfg);
 
-    let fetch_tasks = cfg
-        .rss_feeds
-        .into_iter()
-        .map(|feed| rss_client.check_feed(feed));
+    add_torrents(&transmission_client, &db, &retry_db, torrents);
 
-    let add_tasks = runtime
-        .block_on(join_all(fetch_tasks))
-        .into_iter()
-        .flatten()
-        .map(|torrent| transmission_client.add(torrent));
-
-    runtime.block_on(join_all(add_tasks));
-    runtime.block_on(transmission_client.retry_missing());
+    for (link, torrent) in retry_links {
+        log::info!("Retrying {}", torrent.title);
+        if let Err(err) = transmission_client.add(&torrent) {
+            log::error!("{err}");
+        } else if let Err(err) = retry_db.unset(&link) {
+            log::error!("Unable to remove `{}` from retry.db: {err}", torrent.title);
+        }
+    }
 
     Ok(())
 }
@@ -66,4 +63,51 @@ fn config_dir_path() -> Result<PathBuf> {
     let mut path = home_dir().context("Unable to locate use home directory, is $HOME set?")?;
     path.push(".config/transmission-rss");
     Ok(path)
+}
+
+fn fetch_new_torrents<'a>(
+    cfg: &'a Config,
+    links: &'a FxHashMap<String, String>,
+    retry_links: &'a FxHashMap<String, Torrent>,
+) -> impl Iterator<Item = Torrent> + 'a {
+    cfg.rss_feeds
+        .iter()
+        .map(|feed| {
+            rss::check_feed(feed)
+                .inspect_err(|e| log::error!("Error checking feed `{}`: {e}", feed.name))
+        })
+        .filter_map(Result::ok)
+        .flatten()
+        .filter(|torrent| {
+            !links.contains_key(&torrent.link) && !retry_links.contains_key(&torrent.link)
+        })
+}
+
+fn add_torrents(
+    client: &transmission::Client,
+    db: &kv::Store<String>,
+    retry_db: &kv::Store<Torrent>,
+    torrents: impl Iterator<Item = Torrent>,
+) {
+    for torrent in torrents {
+        match client.add(&torrent) {
+            Ok(()) => {
+                if let Err(err) = db.set(&torrent.link, &torrent.title) {
+                    log::error!(
+                        "Failed to save link for `{}` into db: {err:?}",
+                        torrent.title
+                    );
+                }
+            }
+            Err(err) => {
+                log::error!("Failed to add torrent `{}`: {err}", torrent.title);
+                if let Err(err) = retry_db.set(&torrent.link, &torrent) {
+                    log::error!(
+                        "Failed to save link for `{}` into retry.db: {err}",
+                        torrent.title
+                    );
+                }
+            }
+        }
+    }
 }
